@@ -1,0 +1,42 @@
+# Claude / AI tooling
+.claude/
+CLAUDE.local.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+env/
+
+# Models / large artifacts
+*.cbm
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+*.onnx
+*.model
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Excel lock files
+~$*.xlsx
+~$*.xls

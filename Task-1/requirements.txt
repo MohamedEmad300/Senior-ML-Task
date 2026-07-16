@@ -1,0 +1,9 @@
+pandas
+openpyxl
+scikit-learn
+rapidfuzz
+numpy
+requests
+ollama
+python-docx
+tqdm
