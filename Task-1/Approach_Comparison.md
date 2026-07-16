@@ -1,12 +1,22 @@
-# Approach Comparison: Hybrid vs. Cloud-Only
+# Approach Comparison: Hybrid vs. Cloud-Only (two prompt versions)
 
-Compares `Item_Mapping_Result_Hybrid.xlsx` (local `gemma4:e2b` + cloud
-`gemma4:31b-cloud` escalation, original prompt) against
-`Item_Mapping_Result_CloudOnly_RECOMMENDED.xlsx` (`gemma4:31b-cloud` only,
-refined prompt). Both adjudicate the identical 3,096-item match pool and
-23,132-item parse pool, both fully resolved (0 unprocessed/failed rows in
-either), so every difference below is attributable to the model/prompt
-change, not missing data.
+Three result files are compared here, all adjudicating the identical
+3,096-item match pool and 23,132-item parse pool, all fully resolved (0
+unprocessed/failed rows), so every difference is attributable to the
+model/prompt change, not missing data:
+
+- `Item_Mapping_Result_Hybrid.xlsx` — local `gemma4:e2b` + cloud
+  `gemma4:31b-cloud` escalation, original prompt.
+- `Item_Mapping_Result_CloudOnly_BestResult.xlsx` (**recommended**) —
+  `gemma4:31b-cloud` only, prompt refined after auditing the hybrid run.
+- `Item_Mapping_Result_CloudOnly_PromptV2_EXPERIMENTAL.xlsx` (**not
+  recommended**) — same as BestResult, plus four further prompt
+  refinements. Testing found real improvements *and* a new regression
+  pattern (see "PromptV2 experiment" section below) — kept in this folder
+  for transparency about what was tried, not because it's the better file.
+
+The first two are compared below; the PromptV2 experiment has its own
+section further down.
 
 ## Overall agreement
 
@@ -111,26 +121,74 @@ external resource constraint unrelated to matching quality. (Ollama's
 too, but they reset frequently enough to complete the full workload within
 a single working session across a couple of retry passes.)
 
-## Future work / tuning notes
+## PromptV2 experiment: tested, not adopted
 
-1. **Unit-aware number comparison.** The prompt's strength-matching rule
-   has no explicit unit-normalization step — `1.2 MIU` vs `1,200,000 U` are
-   the same value but look like a huge mismatch to naive comparison.
+`Item_Mapping_Result_CloudOnly_BestResult.xlsx`'s original prompt had four
+known gaps identified from the audit above (originally written up as
+speculative "future work" — since tested for real, see below):
+
+1. **Unit-aware number comparison** — `1.2 MIU` vs `1,200,000 U` are the
+   same value but look like a huge mismatch to naive comparison.
 2. **Don't relax pack-size tolerance when the candidate is missing size
-   info entirely**, as opposed to stating a *different* size. Those are
-   different situations (`BRAND SEAS SYRUP 120 ML` vs `120ML` is a safe
-   relaxation; `Capry Top soap 80gm` vs a candidate with no weight stated
-   at all is a different, riskier situation) and could reasonably get
-   different confidence levels.
-3. **Named variant/size qualifiers should block a match even if pack size
-   otherwise lines up.** Words like `NEWBORN`, `JUNIOR`, `SIZE N`,
-   `MINI`/`MAXI`, `KIDS`/`ADULT` usually denote genuinely different SKUs of
-   the same brand family — treat a mismatch on these like a strength
-   mismatch (always blocking), not like tolerable pack-size noise.
-4. **Generic/category-sounding brand tokens deserve lower confidence.**
-   `GREEN TEA 60 TAB` matched to `GREEN TEA 27 TAB` on a category name
-   rather than a proprietary brand — cap confidence at `medium` when the
-   "brand" token is a common/generic word.
-5. If a paid Gemini account or a batch of keys becomes available, the same
-   refined-prompt approach used for cloud-only should be tried there too,
-   as a third data point on the same identical ambiguous pool.
+   info entirely**, as opposed to stating a *different* size.
+3. **Named variant/size qualifiers should block a match** (`NEWBORN` vs
+   `MINI`, etc.) even if pack size otherwise lines up.
+4. **Generic/category-sounding brand tokens deserve lower confidence**
+   (`GREEN TEA` matched to `GREEN TEA` on a category name, not a brand).
+
+All four were added to the prompt as explicit rules, validated against the
+exact known-wrong cases (7/7 fixed, zero regressions on that small check),
+then run against the full 3,096-item match pool —
+`Item_Mapping_Result_CloudOnly_PromptV2_EXPERIMENTAL.xlsx`. **Result: 0
+`LLM_FAILED`, but a mixed quality outcome on closer audit — not adopted as
+the recommended file.**
+
+Of 3,092 comparable decisions, 208 were cosmetic (CONFIRM vs
+CORRECTED_MATCH label flips on the identical chosen match — no effect on
+`Final_Status`) and 108 were substantive changes. Manually auditing a
+non-exhaustive read of ~45 of those 108:
+
+**Confirmed real wins** — the targeted fixes working as intended:
+- `MOLFIX NO 2 (10) DIAPERS` now correctly rejects `...NEWBORN 60+2...`
+  (exactly the case rule 3 was written for)
+- `RH RHOPHYLAC 300MG...` — v1/BestResult had matched a `300MCG` candidate
+  (a 1000x unit error); PromptV2 correctly matches the `300MG` candidate
+- `SULPERAZON 1.5 MG` — BestResult wrongly confirmed a `1.5GM` candidate
+  (1000x mismatch); PromptV2 correctly rejects
+
+**A new regression pattern found**, concentrated in rule 3 (variant
+qualifiers):
+- `ANISOL 20CAP` — BestResult correctly confirmed `ANISOL 14CAP` (same
+  brand, pack-size-only difference); **PromptV2 wrongly rejects it**
+- `MOVICOL ADULT 20 SACHETS` — BestResult correctly confirmed bare
+  `MOVICOL 20 SACHET`; **PromptV2 wrongly rejects it**
+- `ALECO CARE CREAM 60GRAM` — same pattern, wrongly rejected over a
+  pack-size-only gap
+
+The likely cause: rule 3 says "reject if input and candidate have
+*different* qualifier words" but the model appears to also reject when
+*only one side states a qualifier at all* (e.g. source says "ADULT",
+candidate says nothing) — broader than intended. Found 3+ clear instances
+in the partial sample, so this is a systematic effect, not a one-off.
+
+**One more inconsistency**: `PALMERS COCONUT 150GM` got confirmed against
+a `150 MG` candidate — the exact class of 1000x-unit-mismatch error rule 2
+was built to catch, and which it *did* catch for RHOPHYLAC and SULPERAZON
+above. The unit-awareness rule isn't 100% reliably applied.
+
+**Verdict: not confirmed better than BestResult.** Real wins in specific
+targeted patterns, offset by a new, systematic regression in the
+size-qualifier rule. Recommended next step before promoting this file:
+tighten rule 3 to only block when both sides state *conflicting*
+qualifiers, not when one side is simply silent (that case should fall
+under the normal pack-tolerance rule instead) — then re-audit the specific
+regression cases (`ANISOL`, `MOVICOL`, `ALECO CARE`) before re-comparing
+against BestResult.
+
+## Further future work
+
+1. Apply the rule-3 tightening above and re-validate before considering
+   PromptV2 (or a v3) as a replacement for BestResult.
+2. If a paid Gemini account or a batch of keys becomes available, the same
+   refined-prompt approach should be tried there too, as a fourth data
+   point on the same identical ambiguous pool.
