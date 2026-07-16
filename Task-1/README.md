@@ -4,11 +4,12 @@
 
 | File / folder | What it is |
 |---|---|
-| `Item_Mapping_Result_CloudOnly_RECOMMENDED.xlsx` | **The recommended result.** Full pipeline output using the final, refined approach. |
+| `Item_Mapping_Result_CloudOnly_BestResult.xlsx` | **The recommended result.** Full pipeline output using the verified best-performing approach. |
 | `Item_Mapping_Result_Hybrid.xlsx` | An earlier iteration's output, kept for comparison — see `Approach_Comparison.md`. |
-| `Approach_Comparison.md` | Full write-up comparing the two result files above: what changed, why, and evidence for which one performs better. |
+| `Item_Mapping_Result_CloudOnly_PromptV2_EXPERIMENTAL.xlsx` | A later prompt refinement, tested but **not yet verified as an improvement** — mixed results, see `Approach_Comparison.md`. Not the recommended file. |
+| `Approach_Comparison.md` | Full write-up comparing all three result files above: what changed between each, why, and evidence for which performs better. |
 | `Column_Reference.md` | Explains every column in every sheet of the result workbooks. |
-| `src/` | The implementation — Python source for the recommended pipeline, runnable end-to-end. |
+| `src/` | The implementation — Python source for the recommended (`BestResult`) pipeline, runnable end-to-end. |
 | `Item Mapping.xlsx` | The original input file, included so `src/` is self-contained and runnable as-is. |
 
 ## The task
@@ -30,15 +31,21 @@ result workbook's "Approach Notes" sheet, or `src/build_output.py`):
 4. **Pure LLM pairwise matching** (every item × every candidate) — rejected on cost grounds, infeasible at 60,936 × 5,709 scale.
 5. **Chosen: hybrid retrieval (TF-IDF ∪ embeddings) → fuzzy rerank → tiered LLM adjudication** on only the ambiguous middle tier. Retrieval does the cheap bulk work over all 60,936 rows; an LLM is reserved for the bounded subset of genuinely ambiguous cases.
 
-Within that chosen approach, **two LLM configurations for the adjudication
+Within that chosen approach, **three LLM configurations for the adjudication
 step were built and compared**:
 
 - **Hybrid**: a fast local model (`gemma4:e2b`) handled most calls, escalating
   to a larger cloud model (`gemma4:31b-cloud`) only on low self-reported
   confidence.
-- **Cloud-only (recommended)**: every adjudication call goes to
+- **Cloud-only, "BestResult" (recommended)**: every adjudication call goes to
   `gemma4:31b-cloud`, with a prompt rewritten around explicit matching rules
   after auditing the hybrid run's errors.
+- **Cloud-only, "PromptV2" (experimental, not recommended)**: same as
+  BestResult, plus four further prompt refinements targeting specific error
+  patterns found in BestResult (unit conversion, size-qualifier words,
+  generic brand names). Testing found real improvements *and* a new
+  regression pattern, so this version has **not** been adopted — see
+  `Approach_Comparison.md` for the full before/after audit.
 
 Note: `gemma4:31b` is an open-weights model, not a proprietary closed one —
 cloud inference was used only because the available hardware (a laptop GPU
@@ -77,7 +84,7 @@ ollama list        # confirm embeddinggemma:latest and gemma4:31b-cloud are pres
 python src\run_pipeline.py
 ```
 
-This reproduces `Item_Mapping_Result_CloudOnly_RECOMMENDED.xlsx` from
+This reproduces `Item_Mapping_Result_CloudOnly_BestResult.xlsx` from
 scratch. It's a long run — the embedding pass over ~60,000 unique names
 takes ~20-30 minutes on first run, and LLM adjudication over the ambiguous
 pool (~26,000 items) is the long pole, on the order of a few hours depending
@@ -87,20 +94,22 @@ interrupted run resumes without redoing completed work
 
 ## Results summary
 
-| | Hybrid | Cloud-only (recommended) |
-|---|---|---|
-| Pharmacy 1 — AUTO_ACCEPTED | 1,549 | 1,549 |
-| Pharmacy 1 — LLM_CONFIRMED | 2,085 | 2,016 |
-| Pharmacy 1 — LLM_REJECTED | 480 | 549 |
-| Pharmacy 1 — NO_MATCH | 595 | 595 |
-| Pharmacy 2 — AUTO_ACCEPTED | 118 | 118 |
-| Pharmacy 2 — LLM_CONFIRMED | 362 | 286 |
-| Pharmacy 2 — LLM_REJECTED | 169 | 245 |
-| Pharmacy 2 — NO_MATCH | 351 | 351 |
-| Item Master — parsed by regex | 37,804 (62.0%) | 37,804 (62.0%) |
-| Item Master — parsed by LLM | 23,132 (38.0%) | 23,132 (38.0%) |
-| `LLM_FAILED` rows (either pool) | 0 | 0 |
+| | Hybrid | Cloud-only BestResult (recommended) | Cloud-only PromptV2 (experimental) |
+|---|---|---|---|
+| Pharmacy 1 — AUTO_ACCEPTED | 1,549 | 1,549 | 1,549 |
+| Pharmacy 1 — LLM_CONFIRMED | 2,085 | 2,016 | 2,006 |
+| Pharmacy 1 — LLM_REJECTED | 480 | 549 | 559 |
+| Pharmacy 1 — NO_MATCH | 595 | 595 | 595 |
+| Pharmacy 2 — AUTO_ACCEPTED | 118 | 118 | 118 |
+| Pharmacy 2 — LLM_CONFIRMED | 362 | 286 | 266 |
+| Pharmacy 2 — LLM_REJECTED | 169 | 245 | 265 |
+| Pharmacy 2 — NO_MATCH | 351 | 351 | 351 |
+| Item Master — parsed by regex | 37,804 (62.0%) | 37,804 (62.0%) | 37,804 (62.0%) |
+| Item Master — parsed by LLM | 23,132 (38.0%) | 23,132 (38.0%) | 23,132 (38.0%) |
+| `LLM_FAILED` rows (either pool) | 0 | 0 | 0 |
 
-Both runs are fully resolved (no unprocessed/failed rows). See
-`Approach_Comparison.md` for why the numbers differ and which is more
-accurate.
+All three runs are fully resolved (no unprocessed/failed rows) — the
+PromptV2 experiment is excluded from "recommended" status based on
+*matching quality* found during audit, not incompleteness. See
+`Approach_Comparison.md` for why the numbers differ and the full
+before/after evidence across all three.
